@@ -65,6 +65,7 @@
 #define UUID16_SIZE               2                                          /**< Size of a UUID, in bytes. */
 
 #define LEDBUTTON_LED             BSP_BOARD_LED_2                            /**< LED to indicate a change of state of the the Button characteristic on the peer. */
+#define LEDBUTTON_LED2						BSP_BOARD_LED_3
 
 #define LEDBUTTON_BUTTON_PIN      BSP_BUTTON_0                               /**< Button that will write to the LED characteristic of the peer */
 #define BUTTON_DETECTION_DELAY    APP_TIMER_TICKS(50, APP_TIMER_PRESCALER)   /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
@@ -214,14 +215,29 @@ static void lbs_c_evt_handler(ble_lbs_c_t * p_lbs_c, ble_lbs_c_evt_t * p_lbs_c_e
             NRF_LOG_INFO("Link 0x%x, Button state changed on peer to 0x%x\r\n",
                            p_lbs_c_evt->conn_handle,
                            p_lbs_c_evt->params.button.button_state);
-            if (p_lbs_c_evt->params.button.button_state)
-            {
-                bsp_board_led_on(LEDBUTTON_LED);
-            }
-            else
-            {
-                bsp_board_led_off(LEDBUTTON_LED);
-            }
+						if (p_lbs_c_evt->params.button.button_state & 0x10)
+						{
+								p_lbs_c_evt->params.button.button_state &= 0x0F;
+								if (p_lbs_c_evt->params.button.button_state)
+								{
+										bsp_board_led_on(LEDBUTTON_LED2);
+								}
+								else
+								{
+										bsp_board_led_off(LEDBUTTON_LED2);
+								}
+						}
+						else
+						{
+								if(p_lbs_c_evt->params.button.button_state)
+								{
+										bsp_board_led_on(LEDBUTTON_LED);
+								}
+								else
+								{
+										bsp_board_led_off(LEDBUTTON_LED);
+								}
+						}
         } break; // BLE_LBS_C_EVT_BUTTON_NOTIFICATION
 
         default:
