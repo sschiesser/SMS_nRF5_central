@@ -36,6 +36,7 @@
 #include "ble_conn_state.h"
 #include "fds.h"
 #include "fstorage.h"
+#include "nrf_drv_spi.h"
 
 #define NRF_LOG_MODULE_NAME "APP"
 #include "nrf_log.h"
@@ -85,6 +86,19 @@
 
 #define LEDBUTTON_BUTTON_PIN      BSP_BUTTON_0                               /**< Button that will write to the LED characteristic of the peer */
 #define BUTTON_DETECTION_DELAY    APP_TIMER_TICKS(50, APP_TIMER_PRESCALER)   /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
+
+#define SPI_INSTANCE							0																						/**< SPI instance index. */
+#define SPI_SCK_PIN								3
+#define SPI_MISO_PIN							28
+#define SPI_MOSI_PIN							4
+#define SPI_SS_PIN								29
+#define SPI_MAX_LENGTH						30																				/**< p# - linkQ - serv# - q1-4(16) - aSum(2) - gSum(2) - Temp(2) - TS(4) - batt */
+
+static const nrf_drv_spi_t spi = NRF_DRV_SPI_INSTANCE(SPI_INSTANCE);		  	/**< SPI instance. */
+static volatile bool spi_xfer_done;																					/**< Flag used to indicate that SPI instance completed the transfer. */
+static uint8_t spi_tx_buf[SPI_MAX_LENGTH];			      													/**< TX buffer. */
+static uint8_t spi_rx_buf[SPI_MAX_LENGTH + 1];		    												/**< RX buffer. */
+static uint8_t spi_length;																										/**< Transfer length. */
 
 static const char m_target_periph_name[] = "SABRE_SMS";                  		/**< Name of the device we try to connect to. This name is searched for in the scan report data*/
 
@@ -137,6 +151,32 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
     app_error_handler(0xDEADBEEF, line_num, p_file_name);
 }
 
+
+
+/**
+ * @brief SPI user event handler.
+ * @param event
+ */
+void spi_event_handler(nrf_drv_spi_evt_t const * p_event)
+{
+    spi_xfer_done = true;
+    NRF_LOG_INFO("Transfer completed.\r\n");
+    if (spi_rx_buf[0] != 0)
+    {
+        NRF_LOG_INFO(" Received: \r\n");
+        NRF_LOG_HEXDUMP_INFO(spi_rx_buf, strlen((const char *)spi_rx_buf));
+    }
+}
+
+static void spi_init(void)
+{
+		nrf_drv_spi_config_t spi_config = NRF_DRV_SPI_DEFAULT_CONFIG;
+		spi_config.ss_pin = SPI_SS_PIN;
+		spi_config.miso_pin = SPI_MISO_PIN;
+		spi_config.mosi_pin = SPI_MOSI_PIN;
+		spi_config.sck_pin = SPI_SCK_PIN;
+		APP_ERROR_CHECK(nrf_drv_spi_init(&spi, &spi_config, spi_event_handler));
+}
 
 /**@brief Function for the LEDs initialization.
  *
@@ -231,6 +271,21 @@ static void lbs_c_evt_handler(ble_lbs_c_t * p_lbs_c, ble_lbs_c_evt_t * p_lbs_c_e
             NRF_LOG_INFO("Link 0x%x, Button state changed on peer to 0x%x\r\n",
                            p_lbs_c_evt->conn_handle,
                            p_lbs_c_evt->params.button.button_state);
+						spi_tx_buf[0] = (p_lbs_c_evt->conn_handle & 0xFF);
+						spi_tx_buf[1] = 123;
+						spi_tx_buf[2] = (p_lbs_c_evt->params.peer_db.button_handle & 0xFF);
+						spi_tx_buf[3] = p_lbs_c_evt->params.button.button_state;
+						spi_tx_buf[4] = 0;
+						spi_tx_buf[5] = 1;
+						spi_tx_buf[6] = 2;
+						spi_tx_buf[7] = 3;
+						spi_tx_buf[8] = 0xd3;
+						spi_length = 9;
+						NRF_LOG_INFO("SPI transfer: ");
+						NRF_LOG_HEXDUMP_INFO(spi_tx_buf, spi_length);
+						memset(spi_rx_buf, 0, spi_length);
+						spi_xfer_done = false;
+						APP_ERROR_CHECK(nrf_drv_spi_transfer(&spi, spi_tx_buf, spi_length, spi_rx_buf, spi_length));
 						if (p_lbs_c_evt->params.button.button_state & 0x10)
 						{
 								p_lbs_c_evt->params.button.button_state &= 0x0F;
@@ -653,15 +708,16 @@ static void peer_manager_init(bool erase_bonds)
     sec_param.oob               = SEC_PARAM_OOB;
     sec_param.min_key_size      = SEC_PARAM_MIN_KEY_SIZE;
     sec_param.max_key_size      = SEC_PARAM_MAX_KEY_SIZE;
-    sec_param.kdist_own.enc     = 1;
-    sec_param.kdist_own.id      = 1;
-    sec_param.kdist_peer.enc    = 1;
-    sec_param.kdist_peer.id     = 1;
+    sec_param.kdist_own.enc     = SEC_PARAM_KDIST_OWN_ENC;
+    sec_param.kdist_own.id      = SEC_PARAM_KDIST_OWN_ID;
+    sec_param.kdist_peer.enc    = SEC_PARAM_KDIST_PEER_ENC;
+    sec_param.kdist_peer.id     = SEC_PARAM_KDIST_PEER_ID;
     err_code = pm_sec_params_set(&sec_param);
     APP_ERROR_CHECK(err_code);
     err_code = pm_register(peer_manager_event_handler);
     APP_ERROR_CHECK(err_code);
 }
+
 
 
 /**@brief Function to write to the LED characterestic of all connected clients.
@@ -780,6 +836,7 @@ int main(void)
     APP_ERROR_CHECK(err_code);
     NRF_LOG_INFO("Multilink Example\r\n");
     leds_init();
+		spi_init();
     APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, NULL);
     buttons_init();
     ble_stack_init();
