@@ -64,6 +64,10 @@
 #define SEC_PARAM_OOB               0                                             /**< Out Of Band data not available. */
 #define SEC_PARAM_MIN_KEY_SIZE      7                                             /**< Minimum encryption key size in octets. */
 #define SEC_PARAM_MAX_KEY_SIZE      16                                            /**< Maximum encryption key size in octets. */
+#define SEC_PARAM_KDIST_OWN_ENC			1
+#define SEC_PARAM_KDIST_OWN_ID			1
+#define SEC_PARAM_KDIST_PEER_ENC		1
+#define SEC_PARAM_KDIST_PEER_ID			1
 
 #define SCAN_INTERVAL             0x00A0                                     /**< Determines scan interval in units of 0.625 millisecond. */
 #define SCAN_WINDOW               0x0050                                     /**< Determines scan window in units of 0.625 millisecond. */
@@ -779,7 +783,7 @@ int main(void)
     APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, NULL);
     buttons_init();
     ble_stack_init();
-
+	
 		peer_manager_init(true);
 	
     db_discovery_init();

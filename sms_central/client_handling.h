@@ -22,7 +22,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "ble.h"
-#include "device_manager.h"
+#include "fstorage.h"
+#include "fds.h"
+#include "peer_manager.h"
+#include "ble_conn_state.h"
 
 #ifdef __cplusplus
 extern "C" {
