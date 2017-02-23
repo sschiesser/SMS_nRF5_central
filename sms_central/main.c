@@ -20,6 +20,7 @@
 #include <string.h>
 #include "nordic_common.h"
 #include "softdevice_handler.h"
+#include "peer_manager.h"
 #include "app_timer.h"
 #include "boards.h"
 #include "bsp.h"
@@ -33,6 +34,8 @@
 #include "ble_db_discovery.h"
 #include "ble_lbs_c.h"
 #include "ble_conn_state.h"
+#include "fds.h"
+#include "fstorage.h"
 
 #define NRF_LOG_MODULE_NAME "APP"
 #include "nrf_log.h"
@@ -53,6 +56,15 @@
 #define APP_TIMER_MAX_TIMERS      (2 + BSP_APP_TIMERS_NUMBER)                  /**< Maximum number of timers used by the application. */
 #define APP_TIMER_OP_QUEUE_SIZE   2                                          /**< Size of timer operation queues. */
 
+#define SEC_PARAM_BOND              1                                             /**< Perform bonding. */
+#define SEC_PARAM_MITM              0                                             /**< Man In The Middle protection not required. */
+#define SEC_PARAM_LESC              0                                             /**< LE Secure Connections not enabled. */
+#define SEC_PARAM_KEYPRESS          0                                             /**< Keypress notifications not enabled. */
+#define SEC_PARAM_IO_CAPABILITIES   BLE_GAP_IO_CAPS_NONE                          /**< No I/O capabilities. */
+#define SEC_PARAM_OOB               0                                             /**< Out Of Band data not available. */
+#define SEC_PARAM_MIN_KEY_SIZE      7                                             /**< Minimum encryption key size in octets. */
+#define SEC_PARAM_MAX_KEY_SIZE      16                                            /**< Maximum encryption key size in octets. */
+
 #define SCAN_INTERVAL             0x00A0                                     /**< Determines scan interval in units of 0.625 millisecond. */
 #define SCAN_WINDOW               0x0050                                     /**< Determines scan window in units of 0.625 millisecond. */
 #define SCAN_TIMEOUT              0x0000                                     /**< Timout when scanning. 0x0000 disables timeout. */
@@ -70,7 +82,7 @@
 #define LEDBUTTON_BUTTON_PIN      BSP_BUTTON_0                               /**< Button that will write to the LED characteristic of the peer */
 #define BUTTON_DETECTION_DELAY    APP_TIMER_TICKS(50, APP_TIMER_PRESCALER)   /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
 
-static const char m_target_periph_name[] = "Nordic_Blinky";                  /**< Name of the device we try to connect to. This name is searched for in the scan report data*/
+static const char m_target_periph_name[] = "SABRE_SMS";                  		/**< Name of the device we try to connect to. This name is searched for in the scan report data*/
 
 
 /** @brief Scan parameters requested for scanning and connection. */
@@ -527,6 +539,127 @@ static void ble_stack_init(void)
 }
 
 
+/**@brief Function for handling Peer Manager events.
+ *
+ * @param[in] p_evt  Peer Manager event.
+ */
+static void peer_manager_event_handler(pm_evt_t const * p_evt)
+{
+    ret_code_t err_code;
+    switch(p_evt->evt_id)
+    {
+        case PM_EVT_BONDED_PEER_CONNECTED:
+            // Update the rank of the peer.
+            err_code = pm_peer_rank_highest(p_evt->peer_id);
+            break;
+        case PM_EVT_CONN_SEC_START:
+            break;
+        case PM_EVT_CONN_SEC_SUCCEEDED:
+            // Update the rank of the peer.
+            err_code = pm_peer_rank_highest(p_evt->peer_id);
+            break;
+        case PM_EVT_CONN_SEC_FAILED:
+            // In some cases, when securing fails, it can be restarted directly. Sometimes it can be
+            // restarted, but only after changing some Security Parameters. Sometimes, it cannot be
+            // restarted until the link is disconnected and reconnected. Sometimes it is impossible
+            // to secure the link, or the peer device does not support it. How to handle this error
+            // is highly application-dependent.
+            break;
+        case PM_EVT_CONN_SEC_CONFIG_REQ:
+        {
+            // A connected peer (central) is trying to pair, but the Peer Manager already has a bond
+            // for that peer. Setting allow_repairing to false rejects the pairing request.
+            // If this event is ignored (pm_conn_sec_config_reply is not called in the event
+            // handler), the Peer Manager assumes allow_repairing to be false.
+            pm_conn_sec_config_t conn_sec_config = {.allow_repairing = false};
+            pm_conn_sec_config_reply(p_evt->conn_handle, &conn_sec_config);
+        }
+        break;
+        case PM_EVT_STORAGE_FULL:
+            // Run garbage collection on the flash.
+            err_code = fds_gc();
+            if (err_code == FDS_ERR_BUSY || err_code == FDS_ERR_NO_SPACE_IN_QUEUES)
+            {
+                // Retry.
+            }
+            else
+            {
+                APP_ERROR_CHECK(err_code);
+            }
+            break;
+        case PM_EVT_ERROR_UNEXPECTED:
+            // Assert.
+            APP_ERROR_CHECK(p_evt->params.error_unexpected.error);
+            break;
+        case PM_EVT_PEER_DATA_UPDATE_SUCCEEDED:
+            break;
+        case PM_EVT_PEER_DATA_UPDATE_FAILED:
+            // Assert.
+            APP_ERROR_CHECK_BOOL(false);
+            break;
+        case PM_EVT_PEER_DELETE_SUCCEEDED:
+            break;
+        case PM_EVT_PEER_DELETE_FAILED:
+            // Assert.
+            APP_ERROR_CHECK(p_evt->params.peer_delete_failed.error);
+            break;
+        case PM_EVT_PEERS_DELETE_SUCCEEDED:
+            // At this point it is safe to start advertising or scanning.
+            break;
+        case PM_EVT_PEERS_DELETE_FAILED:
+            // Assert.
+            APP_ERROR_CHECK(p_evt->params.peers_delete_failed_evt.error);
+            break;
+        case PM_EVT_LOCAL_DB_CACHE_APPLIED:
+            break;
+        case PM_EVT_LOCAL_DB_CACHE_APPLY_FAILED:
+            // The local database has likely changed, send service changed indications.
+            pm_local_database_has_changed();
+            break;
+        case PM_EVT_SERVICE_CHANGED_IND_SENT:
+            break;
+        case PM_EVT_SERVICE_CHANGED_IND_CONFIRMED:
+            break;
+    }
+}
+
+
+/**@brief Function for the Peer Manager initialization.
+ *
+ * @param[in] erase_bonds  Indicates whether bonding information should be cleared from
+ *                         persistent storage during initialization of the Peer Manager.
+ */
+static void peer_manager_init(bool erase_bonds)
+{
+    ble_gap_sec_params_t sec_param;
+    ret_code_t err_code;
+    err_code = pm_init();
+    APP_ERROR_CHECK(err_code);
+    if (erase_bonds)
+    {
+        pm_peers_delete();
+    }
+    memset(&sec_param, 0, sizeof(ble_gap_sec_params_t));
+    // Security parameters to be used for all security procedures.
+    sec_param.bond              = SEC_PARAM_BOND;
+    sec_param.mitm              = SEC_PARAM_MITM;
+    sec_param.lesc              = SEC_PARAM_LESC;
+    sec_param.keypress          = SEC_PARAM_KEYPRESS;
+    sec_param.io_caps           = SEC_PARAM_IO_CAPABILITIES;
+    sec_param.oob               = SEC_PARAM_OOB;
+    sec_param.min_key_size      = SEC_PARAM_MIN_KEY_SIZE;
+    sec_param.max_key_size      = SEC_PARAM_MAX_KEY_SIZE;
+    sec_param.kdist_own.enc     = 1;
+    sec_param.kdist_own.id      = 1;
+    sec_param.kdist_peer.enc    = 1;
+    sec_param.kdist_peer.id     = 1;
+    err_code = pm_sec_params_set(&sec_param);
+    APP_ERROR_CHECK(err_code);
+    err_code = pm_register(peer_manager_event_handler);
+    APP_ERROR_CHECK(err_code);
+}
+
+
 /**@brief Function to write to the LED characterestic of all connected clients.
  *
  * @details Based on if the button is pressed or released, we write a high or low LED status to
@@ -647,6 +780,8 @@ int main(void)
     buttons_init();
     ble_stack_init();
 
+		peer_manager_init(true);
+	
     db_discovery_init();
     lbs_c_init();
 
