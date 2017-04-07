@@ -836,12 +836,12 @@ int main(void)
     APP_ERROR_CHECK(err_code);
     NRF_LOG_INFO("Multilink Example\r\n");
     leds_init();
-		spi_init();
+	spi_init();
     APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, NULL);
     buttons_init();
     ble_stack_init();
 	
-		peer_manager_init(true);
+	peer_manager_init(true);
 	
     db_discovery_init();
     lbs_c_init();
