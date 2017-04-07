@@ -32,7 +32,8 @@
 #include "ble_advertising.h"
 #include "ble_conn_params.h"
 #include "ble_db_discovery.h"
-#include "ble_lbs_c.h"
+//#include "ble_lbs_c.h"
+#include "ble_smss_c.h"
 #include "ble_conn_state.h"
 #include "fds.h"
 #include "fstorage.h"
@@ -131,8 +132,8 @@ static const ble_gap_conn_params_t m_connection_param =
     (uint16_t)SUPERVISION_TIMEOUT
 };
 
-static ble_lbs_c_t        m_ble_lbs_c[TOTAL_LINK_COUNT];           /**< Main structures used by the LED Button client module. */
-static uint8_t            m_ble_lbs_c_count;                       /**< Keeps track of how many instances of LED Button client module have been initialized. >*/
+static ble_smss_c_t        m_ble_smss_c[TOTAL_LINK_COUNT];           /**< Main structures used by the LED Button client module. */
+static uint8_t            m_ble_smss_c_count;                       /**< Keeps track of how many instances of LED Button client module have been initialized. >*/
 static ble_db_discovery_t m_ble_db_discovery[TOTAL_LINK_COUNT];    /**< list of DB structures used by the database discovery module. */
 
 /**@brief Function to handle asserts in the SoftDevice.
@@ -247,34 +248,34 @@ static void scan_start(void)
  * @param[in] p_lbs_c     The instance of LBS_C that triggered the event.
  * @param[in] p_lbs_c_evt The LBS_C event.
  */
-static void lbs_c_evt_handler(ble_lbs_c_t * p_lbs_c, ble_lbs_c_evt_t * p_lbs_c_evt)
+static void lbs_c_evt_handler(ble_smss_c_t * p_lbs_c, ble_smss_c_evt_t * p_smss_c_evt)
 {
-    switch (p_lbs_c_evt->evt_type)
+    switch (p_smss_c_evt->evt_type)
     {
-        case BLE_LBS_C_EVT_DISCOVERY_COMPLETE:
+        case BLE_SMSS_C_EVT_DISCOVERY_COMPLETE:
         {
             ret_code_t err_code;
 
             NRF_LOG_INFO("LED Button service discovered on conn_handle 0x%x\r\n",
-                    p_lbs_c_evt->conn_handle);
+                    p_smss_c_evt->conn_handle);
 
             err_code = app_button_enable();
             APP_ERROR_CHECK(err_code);
 
             // LED Button service discovered. Enable notification of Button.
-            err_code = ble_lbs_c_button_notif_enable(p_lbs_c);
+            err_code = ble_smss_c_button_notif_enable(p_lbs_c);
             APP_ERROR_CHECK(err_code);
         } break; // BLE_LBS_C_EVT_DISCOVERY_COMPLETE
 
-        case BLE_LBS_C_EVT_BUTTON_NOTIFICATION:
+        case BLE_SMSS_C_EVT_BUTTON_NOTIFICATION:
         {
             NRF_LOG_INFO("Link 0x%x, Button state changed on peer to 0x%x\r\n",
-                           p_lbs_c_evt->conn_handle,
-                           p_lbs_c_evt->params.button.button_state);
-						spi_tx_buf[0] = (p_lbs_c_evt->conn_handle & 0xFF);
+                           p_smss_c_evt->conn_handle,
+                           p_smss_c_evt->params.button.button_state);
+						spi_tx_buf[0] = (p_smss_c_evt->conn_handle & 0xFF);
 						spi_tx_buf[1] = 123;
-						spi_tx_buf[2] = (p_lbs_c_evt->params.peer_db.button_handle & 0xFF);
-						spi_tx_buf[3] = p_lbs_c_evt->params.button.button_state;
+						spi_tx_buf[2] = (p_smss_c_evt->params.peer_db.button_handle & 0xFF);
+						spi_tx_buf[3] = p_smss_c_evt->params.button.button_state;
 						spi_tx_buf[4] = 0;
 						spi_tx_buf[5] = 1;
 						spi_tx_buf[6] = 2;
@@ -286,10 +287,10 @@ static void lbs_c_evt_handler(ble_lbs_c_t * p_lbs_c, ble_lbs_c_evt_t * p_lbs_c_e
 						memset(spi_rx_buf, 0, spi_length);
 						spi_xfer_done = false;
 						APP_ERROR_CHECK(nrf_drv_spi_transfer(&spi, spi_tx_buf, spi_length, spi_rx_buf, spi_length));
-						if (p_lbs_c_evt->params.button.button_state & 0x10)
+						if (p_smss_c_evt->params.button.button_state & 0x10)
 						{
-								p_lbs_c_evt->params.button.button_state &= 0x0F;
-								if (p_lbs_c_evt->params.button.button_state)
+								p_smss_c_evt->params.button.button_state &= 0x0F;
+								if (p_smss_c_evt->params.button.button_state)
 								{
 										bsp_board_led_on(LEDBUTTON_LED2);
 								}
@@ -300,7 +301,7 @@ static void lbs_c_evt_handler(ble_lbs_c_t * p_lbs_c, ble_lbs_c_evt_t * p_lbs_c_e
 						}
 						else
 						{
-								if(p_lbs_c_evt->params.button.button_state)
+								if(p_smss_c_evt->params.button.button_state)
 								{
 										bsp_board_led_on(LEDBUTTON_LED);
 								}
@@ -411,7 +412,7 @@ static void on_ble_evt(const ble_evt_t * const p_ble_evt)
                          p_gap_evt->conn_handle);
             APP_ERROR_CHECK_BOOL(p_gap_evt->conn_handle < TOTAL_LINK_COUNT);
 
-            err_code = ble_lbs_c_handles_assign(&m_ble_lbs_c[p_gap_evt->conn_handle],
+            err_code = ble_smss_c_handles_assign(&m_ble_smss_c[p_gap_evt->conn_handle],
                                                 p_gap_evt->conn_handle,
                                                 NULL);
             APP_ERROR_CHECK(err_code);
@@ -537,26 +538,26 @@ static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
     if (conn_handle < TOTAL_LINK_COUNT)
     {
         ble_db_discovery_on_ble_evt(&m_ble_db_discovery[conn_handle], p_ble_evt);
-        ble_lbs_c_on_ble_evt(&m_ble_lbs_c[conn_handle], p_ble_evt);
+        ble_smss_c_on_ble_evt(&m_ble_smss_c[conn_handle], p_ble_evt);
     }
 }
 
 
 /**@brief LED Button collector initialization.
  */
-static void lbs_c_init(void)
+static void smss_c_init(void)
 {
     uint32_t         err_code;
-    ble_lbs_c_init_t lbs_c_init_obj;
+    ble_smss_c_init_t smss_c_init_obj;
 
-    lbs_c_init_obj.evt_handler = lbs_c_evt_handler;
+    smss_c_init_obj.evt_handler = lbs_c_evt_handler;
 
-    for (m_ble_lbs_c_count = 0; m_ble_lbs_c_count < TOTAL_LINK_COUNT; m_ble_lbs_c_count++)
+    for (m_ble_smss_c_count = 0; m_ble_smss_c_count < TOTAL_LINK_COUNT; m_ble_smss_c_count++)
     {
-        err_code = ble_lbs_c_init(&m_ble_lbs_c[m_ble_lbs_c_count], &lbs_c_init_obj);
+        err_code = ble_smss_c_init(&m_ble_smss_c[m_ble_smss_c_count], &smss_c_init_obj);
         APP_ERROR_CHECK(err_code);
     }
-    m_ble_lbs_c_count = 0;
+    m_ble_smss_c_count = 0;
 }
 
 
@@ -736,7 +737,7 @@ static uint32_t led_status_send_to_all(uint8_t button_action)
 
     for (uint32_t i = 0; i< CENTRAL_LINK_COUNT; i++)
     {
-        err_code = ble_lbs_led_status_send(&m_ble_lbs_c[i], button_action);
+        err_code = ble_smss_led_status_send(&m_ble_smss_c[i], button_action);
         if (err_code != NRF_SUCCESS &&
             err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
             err_code != NRF_ERROR_INVALID_STATE)
@@ -805,7 +806,7 @@ static void db_disc_handler(ble_db_discovery_evt_t * p_evt)
     NRF_LOG_INFO("call to ble_lbs_on_db_disc_evt for instance %d and link 0x%x!\r\n",
                     p_evt->conn_handle,
                     p_evt->conn_handle);
-    ble_lbs_on_db_disc_evt(&m_ble_lbs_c[p_evt->conn_handle], p_evt);
+    ble_smss_on_db_disc_evt(&m_ble_smss_c[p_evt->conn_handle], p_evt);
 }
 
 
@@ -844,7 +845,7 @@ int main(void)
 	peer_manager_init(true);
 	
     db_discovery_init();
-    lbs_c_init();
+    smss_c_init();
 
     // Start scanning for peripherals and initiate connection to devices which
     // advertise.
