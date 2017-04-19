@@ -248,7 +248,7 @@ static void scan_start(void)
  * @param[in] p_lbs_c     The instance of LBS_C that triggered the event.
  * @param[in] p_lbs_c_evt The LBS_C event.
  */
-static void lbs_c_evt_handler(ble_smss_c_t * p_lbs_c, ble_smss_c_evt_t * p_smss_c_evt)
+static void smss_c_evt_handler(ble_smss_c_t * p_lbs_c, ble_smss_c_evt_t * p_smss_c_evt)
 {
     switch (p_smss_c_evt->evt_type)
     {
@@ -312,7 +312,22 @@ static void lbs_c_evt_handler(ble_smss_c_t * p_lbs_c, ble_smss_c_evt_t * p_smss_
 						}
         } break; // BLE_LBS_C_EVT_BUTTON_NOTIFICATION
 
-        default:
+        
+		case BLE_SMSS_C_EVT_PRESSURE_NOTIFICATION:
+		{
+            NRF_LOG_INFO("Link 0x%x, Button state changed on peer to 0x%x\r\n",
+                           p_smss_c_evt->conn_handle,
+							p_smss_c_evt->params.pressure.press_value);
+		} break;
+		
+		case BLE_SMSS_C_EVT_IMU_NOTIFICATION:
+		{
+            NRF_LOG_INFO("Link 0x%x, Button state changed on peer to 0x%x\r\n",
+                           p_smss_c_evt->conn_handle,
+                           p_smss_c_evt->params.imu.imu_value);
+		} break;
+		
+		default:
             // No implementation needed.
             break;
     }
@@ -550,7 +565,7 @@ static void smss_c_init(void)
     uint32_t         err_code;
     ble_smss_c_init_t smss_c_init_obj;
 
-    smss_c_init_obj.evt_handler = lbs_c_evt_handler;
+    smss_c_init_obj.evt_handler = smss_c_evt_handler;
 
     for (m_ble_smss_c_count = 0; m_ble_smss_c_count < TOTAL_LINK_COUNT; m_ble_smss_c_count++)
     {
@@ -803,7 +818,7 @@ static void buttons_init(void)
  */
 static void db_disc_handler(ble_db_discovery_evt_t * p_evt)
 {
-    NRF_LOG_INFO("call to ble_lbs_on_db_disc_evt for instance %d and link 0x%x!\r\n",
+    NRF_LOG_INFO("call to ble_smss_on_db_disc_evt for instance %d and link 0x%x!\r\n",
                     p_evt->conn_handle,
                     p_evt->conn_handle);
     ble_smss_on_db_disc_evt(&m_ble_smss_c[p_evt->conn_handle], p_evt);
