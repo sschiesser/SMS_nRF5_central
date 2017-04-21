@@ -250,13 +250,15 @@ static void scan_start(void)
  */
 static void smss_c_evt_handler(ble_smss_c_t * p_lbs_c, ble_smss_c_evt_t * p_smss_c_evt)
 {
-    switch (p_smss_c_evt->evt_type)
+ 	NRF_LOG_INFO("Event received... type: %d\n", p_smss_c_evt->evt_type);
+
+	switch (p_smss_c_evt->evt_type)
     {
         case BLE_SMSS_C_EVT_DISCOVERY_COMPLETE:
         {
             ret_code_t err_code;
 
-            NRF_LOG_INFO("LED Button service discovered on conn_handle 0x%x\r\n",
+            NRF_LOG_INFO("SMS service discovered on conn_handle 0x%x\r\n",
                     p_smss_c_evt->conn_handle);
 
             err_code = app_button_enable();
@@ -545,6 +547,8 @@ static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
     uint16_t conn_handle;
     conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
 
+	NRF_LOG_INFO("BLE event!\n");
+	
     ble_conn_state_on_ble_evt(p_ble_evt);
     on_ble_evt(p_ble_evt);
 
