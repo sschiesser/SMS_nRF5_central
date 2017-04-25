@@ -20,7 +20,6 @@
 #include <string.h>
 #include "nordic_common.h"
 #include "softdevice_handler.h"
-#include "peer_manager.h"
 #include "app_timer.h"
 #include "boards.h"
 #include "bsp.h"
@@ -32,12 +31,8 @@
 #include "ble_advertising.h"
 #include "ble_conn_params.h"
 #include "ble_db_discovery.h"
-//#include "ble_lbs_c.h"
-#include "ble_smss_c.h"
+#include "ble_lbs_c.h"
 #include "ble_conn_state.h"
-#include "fds.h"
-#include "fstorage.h"
-#include "nrf_drv_spi.h"
 
 #define NRF_LOG_MODULE_NAME "APP"
 #include "nrf_log.h"
@@ -58,19 +53,6 @@
 #define APP_TIMER_MAX_TIMERS      (2 + BSP_APP_TIMERS_NUMBER)                  /**< Maximum number of timers used by the application. */
 #define APP_TIMER_OP_QUEUE_SIZE   2                                          /**< Size of timer operation queues. */
 
-#define SEC_PARAM_BOND              1                                             /**< Perform bonding. */
-#define SEC_PARAM_MITM              0                                             /**< Man In The Middle protection not required. */
-#define SEC_PARAM_LESC              0                                             /**< LE Secure Connections not enabled. */
-#define SEC_PARAM_KEYPRESS          0                                             /**< Keypress notifications not enabled. */
-#define SEC_PARAM_IO_CAPABILITIES   BLE_GAP_IO_CAPS_NONE                          /**< No I/O capabilities. */
-#define SEC_PARAM_OOB               0                                             /**< Out Of Band data not available. */
-#define SEC_PARAM_MIN_KEY_SIZE      7                                             /**< Minimum encryption key size in octets. */
-#define SEC_PARAM_MAX_KEY_SIZE      16                                            /**< Maximum encryption key size in octets. */
-#define SEC_PARAM_KDIST_OWN_ENC			1
-#define SEC_PARAM_KDIST_OWN_ID			1
-#define SEC_PARAM_KDIST_PEER_ENC		1
-#define SEC_PARAM_KDIST_PEER_ID			1
-
 #define SCAN_INTERVAL             0x00A0                                     /**< Determines scan interval in units of 0.625 millisecond. */
 #define SCAN_WINDOW               0x0050                                     /**< Determines scan window in units of 0.625 millisecond. */
 #define SCAN_TIMEOUT              0x0000                                     /**< Timout when scanning. 0x0000 disables timeout. */
@@ -83,25 +65,11 @@
 #define UUID16_SIZE               2                                          /**< Size of a UUID, in bytes. */
 
 #define LEDBUTTON_LED             BSP_BOARD_LED_2                            /**< LED to indicate a change of state of the the Button characteristic on the peer. */
-#define LEDBUTTON_LED2						BSP_BOARD_LED_3
 
 #define LEDBUTTON_BUTTON_PIN      BSP_BUTTON_0                               /**< Button that will write to the LED characteristic of the peer */
 #define BUTTON_DETECTION_DELAY    APP_TIMER_TICKS(50, APP_TIMER_PRESCALER)   /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
 
-#define SPI_INSTANCE							0																						/**< SPI instance index. */
-#define SPI_SCK_PIN								3
-#define SPI_MISO_PIN							28
-#define SPI_MOSI_PIN							4
-#define SPI_SS_PIN								29
-#define SPI_MAX_LENGTH						30																				/**< p# - linkQ - serv# - q1-4(16) - aSum(2) - gSum(2) - Temp(2) - TS(4) - batt */
-
-static const nrf_drv_spi_t spi = NRF_DRV_SPI_INSTANCE(SPI_INSTANCE);		  	/**< SPI instance. */
-static volatile bool spi_xfer_done;																					/**< Flag used to indicate that SPI instance completed the transfer. */
-static uint8_t spi_tx_buf[SPI_MAX_LENGTH];			      													/**< TX buffer. */
-static uint8_t spi_rx_buf[SPI_MAX_LENGTH + 1];		    												/**< RX buffer. */
-static uint8_t spi_length;																										/**< Transfer length. */
-
-static const char m_target_periph_name[] = "SABRE_SMS";                  		/**< Name of the device we try to connect to. This name is searched for in the scan report data*/
+static const char m_target_periph_name[] = "SABRE_SMS";                  /**< Name of the device we try to connect to. This name is searched for in the scan report data*/
 
 
 /** @brief Scan parameters requested for scanning and connection. */
@@ -132,8 +100,8 @@ static const ble_gap_conn_params_t m_connection_param =
     (uint16_t)SUPERVISION_TIMEOUT
 };
 
-static ble_smss_c_t        m_ble_smss_c[TOTAL_LINK_COUNT];           /**< Main structures used by the LED Button client module. */
-static uint8_t            m_ble_smss_c_count;                       /**< Keeps track of how many instances of LED Button client module have been initialized. >*/
+static ble_lbs_c_t        m_ble_lbs_c[TOTAL_LINK_COUNT];           /**< Main structures used by the LED Button client module. */
+static uint8_t            m_ble_lbs_c_count;                       /**< Keeps track of how many instances of LED Button client module have been initialized. >*/
 static ble_db_discovery_t m_ble_db_discovery[TOTAL_LINK_COUNT];    /**< list of DB structures used by the database discovery module. */
 
 /**@brief Function to handle asserts in the SoftDevice.
@@ -152,32 +120,6 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
     app_error_handler(0xDEADBEEF, line_num, p_file_name);
 }
 
-
-
-/**
- * @brief SPI user event handler.
- * @param event
- */
-void spi_event_handler(nrf_drv_spi_evt_t const * p_event)
-{
-    spi_xfer_done = true;
-    NRF_LOG_INFO("Transfer completed.\r\n");
-    if (spi_rx_buf[0] != 0)
-    {
-        NRF_LOG_INFO(" Received: \r\n");
-        NRF_LOG_HEXDUMP_INFO(spi_rx_buf, strlen((const char *)spi_rx_buf));
-    }
-}
-
-static void spi_init(void)
-{
-		nrf_drv_spi_config_t spi_config = NRF_DRV_SPI_DEFAULT_CONFIG;
-		spi_config.ss_pin = SPI_SS_PIN;
-		spi_config.miso_pin = SPI_MISO_PIN;
-		spi_config.mosi_pin = SPI_MOSI_PIN;
-		spi_config.sck_pin = SPI_SCK_PIN;
-		APP_ERROR_CHECK(nrf_drv_spi_init(&spi, &spi_config, spi_event_handler));
-}
 
 /**@brief Function for the LEDs initialization.
  *
@@ -248,88 +190,41 @@ static void scan_start(void)
  * @param[in] p_lbs_c     The instance of LBS_C that triggered the event.
  * @param[in] p_lbs_c_evt The LBS_C event.
  */
-static void smss_c_evt_handler(ble_smss_c_t * p_lbs_c, ble_smss_c_evt_t * p_smss_c_evt)
+static void lbs_c_evt_handler(ble_lbs_c_t * p_lbs_c, ble_lbs_c_evt_t * p_lbs_c_evt)
 {
- 	NRF_LOG_INFO("Event received... type: %d\n", p_smss_c_evt->evt_type);
-
-	switch (p_smss_c_evt->evt_type)
+    switch (p_lbs_c_evt->evt_type)
     {
-        case BLE_SMSS_C_EVT_DISCOVERY_COMPLETE:
+        case BLE_LBS_C_EVT_DISCOVERY_COMPLETE:
         {
             ret_code_t err_code;
 
-            NRF_LOG_INFO("SMS service discovered on conn_handle 0x%x\r\n",
-                    p_smss_c_evt->conn_handle);
+            NRF_LOG_INFO("LED Button service discovered on conn_handle 0x%x\r\n",
+                    p_lbs_c_evt->conn_handle);
 
             err_code = app_button_enable();
             APP_ERROR_CHECK(err_code);
 
             // LED Button service discovered. Enable notification of Button.
-            err_code = ble_smss_c_button_notif_enable(p_lbs_c);
+            err_code = ble_lbs_c_button_notif_enable(p_lbs_c);
             APP_ERROR_CHECK(err_code);
         } break; // BLE_LBS_C_EVT_DISCOVERY_COMPLETE
 
-        case BLE_SMSS_C_EVT_BUTTON_NOTIFICATION:
+        case BLE_LBS_C_EVT_BUTTON_NOTIFICATION:
         {
             NRF_LOG_INFO("Link 0x%x, Button state changed on peer to 0x%x\r\n",
-                           p_smss_c_evt->conn_handle,
-                           p_smss_c_evt->params.button.button_state);
-						spi_tx_buf[0] = (p_smss_c_evt->conn_handle & 0xFF);
-						spi_tx_buf[1] = 123;
-						spi_tx_buf[2] = (p_smss_c_evt->params.peer_db.button_handle & 0xFF);
-						spi_tx_buf[3] = p_smss_c_evt->params.button.button_state;
-						spi_tx_buf[4] = 0;
-						spi_tx_buf[5] = 1;
-						spi_tx_buf[6] = 2;
-						spi_tx_buf[7] = 3;
-						spi_tx_buf[8] = 0xd3;
-						spi_length = 9;
-						NRF_LOG_INFO("SPI transfer: ");
-						NRF_LOG_HEXDUMP_INFO(spi_tx_buf, spi_length);
-						memset(spi_rx_buf, 0, spi_length);
-						spi_xfer_done = false;
-						APP_ERROR_CHECK(nrf_drv_spi_transfer(&spi, spi_tx_buf, spi_length, spi_rx_buf, spi_length));
-						if (p_smss_c_evt->params.button.button_state & 0x10)
-						{
-								p_smss_c_evt->params.button.button_state &= 0x0F;
-								if (p_smss_c_evt->params.button.button_state)
-								{
-										bsp_board_led_on(LEDBUTTON_LED2);
-								}
-								else
-								{
-										bsp_board_led_off(LEDBUTTON_LED2);
-								}
-						}
-						else
-						{
-								if(p_smss_c_evt->params.button.button_state)
-								{
-										bsp_board_led_on(LEDBUTTON_LED);
-								}
-								else
-								{
-										bsp_board_led_off(LEDBUTTON_LED);
-								}
-						}
+                           p_lbs_c_evt->conn_handle,
+                           p_lbs_c_evt->params.button.button_state);
+            if (p_lbs_c_evt->params.button.button_state)
+            {
+                bsp_board_led_on(LEDBUTTON_LED);
+            }
+            else
+            {
+                bsp_board_led_off(LEDBUTTON_LED);
+            }
         } break; // BLE_LBS_C_EVT_BUTTON_NOTIFICATION
 
-        
-		case BLE_SMSS_C_EVT_PRESSURE_NOTIFICATION:
-		{
-            NRF_LOG_INFO("Link 0x%x, Button state changed on peer to 0x%x\r\n",
-                           p_smss_c_evt->conn_handle,
-							p_smss_c_evt->params.pressure.press_value);
-		} break;
-		
-		case BLE_SMSS_C_EVT_IMU_NOTIFICATION:
-		{
-            NRF_LOG_INFO("Link 0x%x, Button state changed on peer to 0x%x\r\n",
-                           p_smss_c_evt->conn_handle,
-                           p_smss_c_evt->params.imu.imu_value);
-		} break;
-		
-		default:
+        default:
             // No implementation needed.
             break;
     }
@@ -429,7 +324,7 @@ static void on_ble_evt(const ble_evt_t * const p_ble_evt)
                          p_gap_evt->conn_handle);
             APP_ERROR_CHECK_BOOL(p_gap_evt->conn_handle < TOTAL_LINK_COUNT);
 
-            err_code = ble_smss_c_handles_assign(&m_ble_smss_c[p_gap_evt->conn_handle],
+            err_code = ble_lbs_c_handles_assign(&m_ble_lbs_c[p_gap_evt->conn_handle],
                                                 p_gap_evt->conn_handle,
                                                 NULL);
             APP_ERROR_CHECK(err_code);
@@ -547,7 +442,7 @@ static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
     uint16_t conn_handle;
     conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
 
-//	NRF_LOG_INFO("BLE event!\n");
+	NRF_LOG_INFO("Dispatch...\n\r");
 	
     ble_conn_state_on_ble_evt(p_ble_evt);
     on_ble_evt(p_ble_evt);
@@ -557,26 +452,26 @@ static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
     if (conn_handle < TOTAL_LINK_COUNT)
     {
         ble_db_discovery_on_ble_evt(&m_ble_db_discovery[conn_handle], p_ble_evt);
-        ble_smss_c_on_ble_evt(&m_ble_smss_c[conn_handle], p_ble_evt);
+        ble_lbs_c_on_ble_evt(&m_ble_lbs_c[conn_handle], p_ble_evt);
     }
 }
 
 
 /**@brief LED Button collector initialization.
  */
-static void smss_c_init(void)
+static void lbs_c_init(void)
 {
     uint32_t         err_code;
-    ble_smss_c_init_t smss_c_init_obj;
+    ble_lbs_c_init_t lbs_c_init_obj;
 
-    smss_c_init_obj.evt_handler = smss_c_evt_handler;
+    lbs_c_init_obj.evt_handler = lbs_c_evt_handler;
 
-    for (m_ble_smss_c_count = 0; m_ble_smss_c_count < TOTAL_LINK_COUNT; m_ble_smss_c_count++)
+    for (m_ble_lbs_c_count = 0; m_ble_lbs_c_count < TOTAL_LINK_COUNT; m_ble_lbs_c_count++)
     {
-        err_code = ble_smss_c_init(&m_ble_smss_c[m_ble_smss_c_count], &smss_c_init_obj);
+        err_code = ble_lbs_c_init(&m_ble_lbs_c[m_ble_lbs_c_count], &lbs_c_init_obj);
         APP_ERROR_CHECK(err_code);
     }
-    m_ble_smss_c_count = 0;
+    m_ble_lbs_c_count = 0;
 }
 
 
@@ -618,129 +513,6 @@ static void ble_stack_init(void)
 }
 
 
-/**@brief Function for handling Peer Manager events.
- *
- * @param[in] p_evt  Peer Manager event.
- */
-static void peer_manager_event_handler(pm_evt_t const * p_evt)
-{
-    ret_code_t err_code;
-	NRF_LOG_INFO("Peer manager event: %d\n", p_evt->evt_id);
-    switch(p_evt->evt_id)
-    {
-        case PM_EVT_BONDED_PEER_CONNECTED:
-            // Update the rank of the peer.
-            err_code = pm_peer_rank_highest(p_evt->peer_id);
-            break;
-        case PM_EVT_CONN_SEC_START:
-            break;
-        case PM_EVT_CONN_SEC_SUCCEEDED:
-            // Update the rank of the peer.
-            err_code = pm_peer_rank_highest(p_evt->peer_id);
-            break;
-        case PM_EVT_CONN_SEC_FAILED:
-            // In some cases, when securing fails, it can be restarted directly. Sometimes it can be
-            // restarted, but only after changing some Security Parameters. Sometimes, it cannot be
-            // restarted until the link is disconnected and reconnected. Sometimes it is impossible
-            // to secure the link, or the peer device does not support it. How to handle this error
-            // is highly application-dependent.
-            break;
-        case PM_EVT_CONN_SEC_CONFIG_REQ:
-        {
-            // A connected peer (central) is trying to pair, but the Peer Manager already has a bond
-            // for that peer. Setting allow_repairing to false rejects the pairing request.
-            // If this event is ignored (pm_conn_sec_config_reply is not called in the event
-            // handler), the Peer Manager assumes allow_repairing to be false.
-            pm_conn_sec_config_t conn_sec_config = {.allow_repairing = false};
-            pm_conn_sec_config_reply(p_evt->conn_handle, &conn_sec_config);
-        }
-        break;
-        case PM_EVT_STORAGE_FULL:
-            // Run garbage collection on the flash.
-            err_code = fds_gc();
-            if (err_code == FDS_ERR_BUSY || err_code == FDS_ERR_NO_SPACE_IN_QUEUES)
-            {
-                // Retry.
-            }
-            else
-            {
-                APP_ERROR_CHECK(err_code);
-            }
-            break;
-        case PM_EVT_ERROR_UNEXPECTED:
-            // Assert.
-            APP_ERROR_CHECK(p_evt->params.error_unexpected.error);
-            break;
-        case PM_EVT_PEER_DATA_UPDATE_SUCCEEDED:
-            break;
-        case PM_EVT_PEER_DATA_UPDATE_FAILED:
-            // Assert.
-            APP_ERROR_CHECK_BOOL(false);
-            break;
-        case PM_EVT_PEER_DELETE_SUCCEEDED:
-            break;
-        case PM_EVT_PEER_DELETE_FAILED:
-            // Assert.
-            APP_ERROR_CHECK(p_evt->params.peer_delete_failed.error);
-            break;
-        case PM_EVT_PEERS_DELETE_SUCCEEDED:
-            // At this point it is safe to start advertising or scanning.
-            break;
-        case PM_EVT_PEERS_DELETE_FAILED:
-            // Assert.
-            APP_ERROR_CHECK(p_evt->params.peers_delete_failed_evt.error);
-            break;
-        case PM_EVT_LOCAL_DB_CACHE_APPLIED:
-            break;
-        case PM_EVT_LOCAL_DB_CACHE_APPLY_FAILED:
-            // The local database has likely changed, send service changed indications.
-            pm_local_database_has_changed();
-            break;
-        case PM_EVT_SERVICE_CHANGED_IND_SENT:
-            break;
-        case PM_EVT_SERVICE_CHANGED_IND_CONFIRMED:
-            break;
-    }
-}
-
-
-/**@brief Function for the Peer Manager initialization.
- *
- * @param[in] erase_bonds  Indicates whether bonding information should be cleared from
- *                         persistent storage during initialization of the Peer Manager.
- */
-static void peer_manager_init(bool erase_bonds)
-{
-    ble_gap_sec_params_t sec_param;
-    ret_code_t err_code;
-    err_code = pm_init();
-    APP_ERROR_CHECK(err_code);
-    if (erase_bonds)
-    {
-        pm_peers_delete();
-    }
-    memset(&sec_param, 0, sizeof(ble_gap_sec_params_t));
-    // Security parameters to be used for all security procedures.
-    sec_param.bond              = SEC_PARAM_BOND;
-    sec_param.mitm              = SEC_PARAM_MITM;
-    sec_param.lesc              = SEC_PARAM_LESC;
-    sec_param.keypress          = SEC_PARAM_KEYPRESS;
-    sec_param.io_caps           = SEC_PARAM_IO_CAPABILITIES;
-    sec_param.oob               = SEC_PARAM_OOB;
-    sec_param.min_key_size      = SEC_PARAM_MIN_KEY_SIZE;
-    sec_param.max_key_size      = SEC_PARAM_MAX_KEY_SIZE;
-    sec_param.kdist_own.enc     = SEC_PARAM_KDIST_OWN_ENC;
-    sec_param.kdist_own.id      = SEC_PARAM_KDIST_OWN_ID;
-    sec_param.kdist_peer.enc    = SEC_PARAM_KDIST_PEER_ENC;
-    sec_param.kdist_peer.id     = SEC_PARAM_KDIST_PEER_ID;
-    err_code = pm_sec_params_set(&sec_param);
-    APP_ERROR_CHECK(err_code);
-    err_code = pm_register(peer_manager_event_handler);
-    APP_ERROR_CHECK(err_code);
-}
-
-
-
 /**@brief Function to write to the LED characterestic of all connected clients.
  *
  * @details Based on if the button is pressed or released, we write a high or low LED status to
@@ -757,7 +529,7 @@ static uint32_t led_status_send_to_all(uint8_t button_action)
 
     for (uint32_t i = 0; i< CENTRAL_LINK_COUNT; i++)
     {
-        err_code = ble_smss_led_status_send(&m_ble_smss_c[i], button_action);
+        err_code = ble_lbs_led_status_send(&m_ble_lbs_c[i], button_action);
         if (err_code != NRF_SUCCESS &&
             err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
             err_code != NRF_ERROR_INVALID_STATE)
@@ -823,10 +595,10 @@ static void buttons_init(void)
  */
 static void db_disc_handler(ble_db_discovery_evt_t * p_evt)
 {
-    NRF_LOG_INFO("call to ble_smss_on_db_disc_evt for instance %d and link 0x%x!\r\n",
+    NRF_LOG_INFO("call to ble_lbs_on_db_disc_evt for instance %d and link 0x%x!\r\n",
                     p_evt->conn_handle,
                     p_evt->conn_handle);
-    ble_smss_on_db_disc_evt(&m_ble_smss_c[p_evt->conn_handle], p_evt);
+    ble_lbs_on_db_disc_evt(&m_ble_lbs_c[p_evt->conn_handle], p_evt);
 }
 
 
@@ -857,15 +629,12 @@ int main(void)
     APP_ERROR_CHECK(err_code);
     NRF_LOG_INFO("Multilink Example\r\n");
     leds_init();
-	spi_init();
     APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, NULL);
     buttons_init();
     ble_stack_init();
-	
-	peer_manager_init(true);
-	
+
     db_discovery_init();
-    smss_c_init();
+    lbs_c_init();
 
     // Start scanning for peripherals and initiate connection to devices which
     // advertise.
