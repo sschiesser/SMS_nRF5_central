@@ -442,12 +442,10 @@ static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
     uint16_t conn_handle;
     conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
 
-	NRF_LOG_INFO("Dispatch...\n\r");
-	
     ble_conn_state_on_ble_evt(p_ble_evt);
     on_ble_evt(p_ble_evt);
 
-    // Make sure taht an invalid connection handle are not passed since
+    // Make sure that an invalid connection handle are not passed since
     // our array of modules is bound to TOTAL_LINK_COUNT.
     if (conn_handle < TOTAL_LINK_COUNT)
     {
